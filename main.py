@@ -1,58 +1,51 @@
 import imageio
 import os
-import matplotlib
-import matplotlib.pyplot as plt
-import numpy as np
 from tqdm import tqdm
+import argparse
 
-filename = "/media/shared/Aquaman.2018..MULTi.1080p.HDLight.x264.AC3-TOXIC.mkv"
-filename = "/media/shared/Mad Max Fury Road 2015.mkv"
-method = "mean_pixel_wide"
+from methods import build_barcode
+from displays import build_final_product
 
-width = 1 if method == "mean_pixel_wide" else 640
-height = 360
-fps = 1
 
-reader = imageio.get_reader(filename, size=(width, height), fps=fps)
+def main(args):
+    wide_methods = ['x_wide', 'x_mean_wide']
+    width = 1 if args.method in wide_methods else 640
+    height = 360
 
-def frame_wise(reader):
-    """Process each frame globally (35min/360p)"""
-    mean_colors = []
-    square_mean_colors = []
-    median_colors = []
-    for i, im in tqdm(enumerate(reader)):
-        mean = np.mean(np.array(im), axis=0)
-        mean_colors.append(tuple(np.mean(mean, axis=0)))
-        
-        square = np.square(np.array(im), dtype=np.float64)
-        mean = np.mean(square, axis=0)
-        mean = np.mean(mean, axis=0)
-        square_mean_colors.append(tuple(np.sqrt(mean)))
+    reader = imageio.get_reader(args.video_file, size=(width, height), fps=args.fps)
+    nb_frames = (int(reader.get_meta_data()['duration']) + 1) * args.fps
 
-        median = np.median(np.array(im), axis=0)
-        median_colors.append(tuple(np.median(median, axis=0)))
-    methods = ['mean', 'square_mean', 'median']
-    return [mean_colors, square_mean_colors, median_colors], methods
+    if args.method in wide_methods:
+        height = nb_frames * width // 3
+        reader = imageio.get_reader(args.video_file, size=(width, height), fps=args.fps)
 
-def mean_pixel_wide(reader):
-    """Reduce frame to X pixel wide (15min/360p)"""
-    mean_colors = []
-    colors = []
-    for i, im in tqdm(enumerate(reader)):
-        colors.append(np.array(im).astype(np.uint8))
-        mean = np.mean(np.array(im), axis=0)
-        for ind in range(mean.shape[0]):
-            mean_colors.append(tuple(mean[ind]))
-    return [mean_colors, colors], ['mean_pixel_wide', 'pixel_wide']
+    print('Number of frames to process:', nb_frames)
 
-colors_arr, method_used_arr = eval(method)(reader)
-for colors, method_used in zip(colors_arr, method_used_arr):
-    colors = np.array(colors)
-    if method_used == 'pixel_wide':
-        np_colors = colors.reshape((colors.shape[0], colors.shape[1], 3)).astype(np.uint8)
-        result = np.transpose(np_colors, axes=[1,0,2])
-    else:
-        np_colors = colors.reshape((1, len(colors), 3)).astype(np.uint8)
-        result = np.vstack([np_colors] * (len(colors) // 3))
-    image_name = '{}_{}_{}_{}_{}.png'.format(os.path.basename(filename), method_used, fps, width, height)
-    matplotlib.image.imsave(image_name, result)
+    barcode = build_barcode(reader, nb_frames, args.method, wide_methods)
+
+    pil_result = build_final_product(barcode, args.display)
+
+    image_name = '{}_{}_{}_{}_{}.png'.format(os.path.basename(args.video_file), args.fps, args.method, width, height)
+    pil_result.save(os.path.join(args.out_folder, image_name))
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument('--video_file', type=str, required=True)
+    parser.add_argument('--out_folder', type=str, required=True)
+    parser.add_argument('--method', type=str, default='x_wide', help='mean, square_mean, median, x_wide, x_mean_wide')
+    parser.add_argument('--display', type=str, default='circle', help='barcode or circle')
+    parser.add_argument('--fps', type=float, default=1, help='how many frames to process per sec')
+
+    args = parser.parse_args()
+
+    if args.display not in ['barcode', 'circle']:
+        raise ValueError('Incorrect display style: {}'.format(args.display))
+    elif args.method not in ['mean', 'square_mean', 'median', 'x_wide', 'x_mean_wide']:
+        raise ValueError('Incorrect method: {}'.format(args.method))
+
+    os.makedirs(args.out_folder, exist_ok=True)
+
+    main(args)
+
